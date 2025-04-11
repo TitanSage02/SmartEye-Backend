@@ -1,7 +1,10 @@
 from fastapi import FastAPI, HTTPException, Form, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
+
+from datetime import datetime, timezone, timedelta
+
+
 import json
 import base64
 import httpx
@@ -74,10 +77,11 @@ async def report_incident(
         mime_type = image.content_type if image.content_type in ["image/jpeg", "image/png"] else "image/jpeg"
         formatted_image_base64 = format_image_base64(image_data, mime_type)
 
+
         # Construire la réponse
         response_data = {
             "id": len(incident_storage) + 1,  # ID incrémental pour le prototype
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone(timedelta(hours=1))).isoformat(),
             "type": incident_types,
             "location": "Cotonou - Carrefour SIKA",  # À rendre dynamique si nécessaire
             "image": formatted_image_base64,
