@@ -1,0 +1,113 @@
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
+import json
+import base64
+import httpx
+from dotenv import load_dotenv
+import os
+
+# Chargement des variables d’environnement
+load_dotenv()
+APP_TARGET_URL = os.getenv("APP_TARGET_URL")  # URL cible pour les services compétents
+
+app = FastAPI(title="Smart Eye - Détection intelligente d’incidents")
+
+# Autoriser les CORS pour le front-end
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Stockage temporaire pour les incidents (pour un prototype)
+incident_storage = []
+
+# Fonction pour envoyer la réponse aux services compétents
+async def send_to_app(response_data):
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(APP_TARGET_URL, json=response_data)
+    except Exception as e:
+        print(f"Erreur lors de l'envoi aux services compétents : {str(e)}")
+
+# Fonction pour valider et formater l’image base64
+def format_image_base64(image_data: bytes, mime_type: str = "image/jpeg") -> str:
+    try:
+        base64_string = base64.b64encode(image_data).decode("utf-8")
+        return f"data:{mime_type};base64,{base64_string}"
+    except Exception:
+        raise HTTPException(status_code=400, detail="Impossible d'encoder l'image en base64")
+
+# Endpoint POST principal pour signaler un incident
+@app.post("/report_incident/")
+async def report_incident(
+    response: str = Form(...),  # JSON sous forme de chaîne
+    image: UploadFile = File(...)  # Image brute comme fichier
+):
+    try:
+        # Parser le JSON
+        data = json.loads(response)
+        expected_keys = {"accident", "incendie", "violence", "commentaire"}
+        if not isinstance(data, dict) or set(data.keys()) != expected_keys:
+            raise HTTPException(status_code=400, detail="Le JSON doit contenir exactement 'accident', 'incendie', 'violence', 'commentaire'")
+
+        if not all(isinstance(data[key], bool) for key in ["accident", "incendie", "violence"]):
+            raise HTTPException(status_code=400, detail="Les champs 'accident', 'incendie', 'violence' doivent être des booléens")
+        if not isinstance(data["commentaire"], str):
+            raise HTTPException(status_code=400, detail="Le champ 'commentaire' doit être une chaîne")
+
+        # Identifier les types d’incidents
+        incident_types = []
+        if data["accident"]:
+            incident_types.append("accident")
+        if data["incendie"]:
+            incident_types.append("incendie")
+        if data["violence"]:
+            incident_types.append("violence")
+        
+        if not incident_types:
+            raise HTTPException(status_code=400, detail="Aucun type d'incident détecté (au moins un booléen doit être true)")
+
+        # Lire et encoder l’image
+        image_data = await image.read()
+        if not image_data:
+            raise HTTPException(status_code=400, detail="L'image est vide")
+        
+        mime_type = image.content_type if image.content_type in ["image/jpeg", "image/png"] else "image/jpeg"
+        formatted_image_base64 = format_image_base64(image_data, mime_type)
+
+        # Construire la réponse
+        response_data = {
+            "timestamp": datetime.now().isoformat(),
+            "incident_types": incident_types,
+            "location": "Cotonou - Carrefour SIKA",  # À rendre dynamique si nécessaire
+            "image_data": formatted_image_base64,
+            "message": data["commentaire"]
+        }
+
+        print("Données reçues et formatées :")
+        response_data_short = response_data.copy()
+        response_data_short["image_data"] = response_data["image_data"][:50] + "..."  # Pour lisibilité
+        print(json.dumps(response_data_short, indent=2))
+        
+        # Stocker l'incident pour le monitoring (pour prototype)
+        incident_storage.append(response_data)
+        
+        # Envoyer aux services compétents
+        await send_to_app(response_data)
+
+        return JSONResponse(response_data)
+
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Le JSON envoyé n'est pas valide")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Endpoint GET pour récupérer les incidents signalés (pour monitoring)
+@app.get("/incidents")
+async def get_incidents():
+    return incident_storage
