@@ -9,6 +9,10 @@ import json
 import base64
 import httpx
 
+import os
+from pathlib import Path
+
+
 app = FastAPI(title="Smart Eye - Détection intelligente d’incidents")
 
 # Autoriser les CORS pour le front-end
@@ -22,6 +26,27 @@ app.add_middleware(
 
 # Stockage temporaire pour les incidents (pour un prototype)
 incident_storage = []
+
+# Fichier de persistance des incidents
+INCIDENT_FILE = Path("incident_data.json")
+
+# Charger les incidents à partir du fichier lors du démarrage
+if INCIDENT_FILE.exists():
+    try:
+        with open(INCIDENT_FILE, "r", encoding="utf-8") as f:
+            incident_storage.extend(json.load(f))
+            print(f"{len(incident_storage)} incidents chargés depuis le fichier.")
+    except Exception as e:
+        print(f"Erreur lors du chargement des incidents : {e}")
+
+# Enregistrer les incidents à chaque ajout
+def save_incident_to_file():
+    try:
+        with open(INCIDENT_FILE, "w", encoding="utf-8") as f:
+            json.dump(incident_storage, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Erreur lors de la sauvegarde de l'incident : {e}")
+
 
 # # Fonction pour envoyer la réponse aux services compétents
 # async def send_to_app(response_data):
@@ -95,6 +120,8 @@ async def report_incident(
         
         # Stocker l'incident pour le monitoring (pour prototype)
         incident_storage.append(response_data)
+        save_incident_to_file()
+
         
         # Envoyer aux services compétents
         # await send_to_app(response_data)
