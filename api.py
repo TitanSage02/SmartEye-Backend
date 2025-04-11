@@ -5,12 +5,6 @@ from datetime import datetime
 import json
 import base64
 import httpx
-from dotenv import load_dotenv
-import os
-
-# Chargement des variables d’environnement
-load_dotenv()
-APP_TARGET_URL = os.getenv("APP_TARGET_URL")  # URL cible pour les services compétents
 
 app = FastAPI(title="Smart Eye - Détection intelligente d’incidents")
 
@@ -26,13 +20,13 @@ app.add_middleware(
 # Stockage temporaire pour les incidents (pour un prototype)
 incident_storage = []
 
-# Fonction pour envoyer la réponse aux services compétents
-async def send_to_app(response_data):
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(APP_TARGET_URL, json=response_data)
-    except Exception as e:
-        print(f"Erreur lors de l'envoi aux services compétents : {str(e)}")
+# # Fonction pour envoyer la réponse aux services compétents
+# async def send_to_app(response_data):
+#     try:
+#         async with httpx.AsyncClient() as client:
+#             await client.post(APP_TARGET_URL, json=response_data)
+#     except Exception as e:
+#         print(f"Erreur lors de l'envoi aux services compétents : {str(e)}")
 
 # Fonction pour valider et formater l’image base64
 def format_image_base64(image_data: bytes, mime_type: str = "image/jpeg") -> str:
