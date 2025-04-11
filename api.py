@@ -82,25 +82,26 @@ async def report_incident(
 
         # Construire la réponse
         response_data = {
+            "id": len(incident_storage) + 1,  # ID incrémental pour le prototype
             "timestamp": datetime.now().isoformat(),
-            "incident_types": incident_types,
+            "type": incident_types,
             "location": "Cotonou - Carrefour SIKA",  # À rendre dynamique si nécessaire
-            "image_data": formatted_image_base64,
+            "image": formatted_image_base64,
             "message": data["commentaire"]
         }
 
         print("Données reçues et formatées :")
         response_data_short = response_data.copy()
-        response_data_short["image_data"] = response_data["image_data"][:50] + "..."  # Pour lisibilité
+        response_data_short["image"] = response_data["image"][:50] + "..."  # Pour lisibilité
         print(json.dumps(response_data_short, indent=2))
         
         # Stocker l'incident pour le monitoring (pour prototype)
         incident_storage.append(response_data)
         
         # Envoyer aux services compétents
-        await send_to_app(response_data)
-
-        return JSONResponse(response_data)
+        # await send_to_app(response_data)
+        response_for_client = {"status": "success", "message": "Incident signalé avec succès"}
+        return JSONResponse(response_for_client)
 
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Le JSON envoyé n'est pas valide")
