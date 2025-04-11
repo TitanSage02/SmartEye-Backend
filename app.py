@@ -1,17 +1,18 @@
+import logging
 from fastapi import FastAPI, HTTPException, Form, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-
 from datetime import datetime, timezone, timedelta
-
-
 import json
 import base64
 import httpx
-
-import os
 from pathlib import Path
+import aiofiles
+from pydantic import BaseModel, ValidationError
 
+# Configuration du logging
+logger = logging.getLogger("incident_api")
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Smart Eye - Détection intelligente d’incidents")
 
@@ -30,33 +31,39 @@ incident_storage = []
 # Fichier de persistance des incidents
 INCIDENT_FILE = Path("incident_data.json")
 
-# Charger les incidents à partir du fichier lors du démarrage
+# Charger les incidents depuis le fichier lors du démarrage
 if INCIDENT_FILE.exists():
     try:
         with open(INCIDENT_FILE, "r", encoding="utf-8") as f:
-            incident_storage.extend(json.load(f))
-            print(f"{len(incident_storage)} incidents chargés depuis le fichier.")
+            loaded_data = json.load(f)
+            if isinstance(loaded_data, list):
+                incident_storage.extend(loaded_data)
+                logger.info(f"{len(incident_storage)} incidents chargés depuis le fichier.")
+            else:
+                logger.error("Le contenu du fichier n'est pas une liste.")
     except Exception as e:
-        print(f"Erreur lors du chargement des incidents : {e}")
+        logger.error(f"Erreur lors du chargement des incidents : {e}")
 
-# Enregistrer les incidents à chaque ajout
-def save_incident_to_file():
+# Sauvegarde asynchrone des incidents dans le fichier
+async def save_incident_to_file():
     try:
-        with open(INCIDENT_FILE, "w", encoding="utf-8") as f:
-            json.dump(incident_storage, f, ensure_ascii=False, indent=2)
+        async with aiofiles.open(INCIDENT_FILE, "w", encoding="utf-8") as f:
+            data = json.dumps(incident_storage, ensure_ascii=False, indent=2)
+            await f.write(data)
     except Exception as e:
-        print(f"Erreur lors de la sauvegarde de l'incident : {e}")
+        logger.error(f"Erreur lors de la sauvegarde de l'incident : {e}")
 
+# Modèle Pydantic pour valider le JSON du formulaire
+class IncidentReport(BaseModel):
+    accident: bool
+    incendie: bool
+    violence: bool
+    commentaire: str
 
-# # Fonction pour envoyer la réponse aux services compétents
-# async def send_to_app(response_data):
-#     try:
-#         async with httpx.AsyncClient() as client:
-#             await client.post(APP_TARGET_URL, json=response_data)
-#     except Exception as e:
-#         print(f"Erreur lors de l'envoi aux services compétents : {str(e)}")
+    class Config:
+        extra = 'forbid'  # Interdit toute clé supplémentaire
 
-# Fonction pour valider et formater l’image base64
+# Fonction pour encoder l’image au format base64
 def format_image_base64(image_data: bytes, mime_type: str = "image/jpeg") -> str:
     try:
         base64_string = base64.b64encode(image_data).decode("utf-8")
@@ -64,37 +71,35 @@ def format_image_base64(image_data: bytes, mime_type: str = "image/jpeg") -> str
     except Exception:
         raise HTTPException(status_code=400, detail="Impossible d'encoder l'image en base64")
 
-# Endpoint POST principal pour signaler un incident
+# Endpoint POST pour signaler un incident
 @app.post("/report_incident/")
 async def report_incident(
     response: str = Form(...),  # JSON sous forme de chaîne
-    image: UploadFile = File(...)  # Image brute comme fichier
+    image: UploadFile = File(...)  # Image brute en fichier
 ):
     try:
-        # Parser le JSON
-        data = json.loads(response)
-        expected_keys = {"accident", "incendie", "violence", "commentaire"}
-        if not isinstance(data, dict) or set(data.keys()) != expected_keys:
-            raise HTTPException(status_code=400, detail="Le JSON doit contenir exactement 'accident', 'incendie', 'violence', 'commentaire'")
-
-        if not all(isinstance(data[key], bool) for key in ["accident", "incendie", "violence"]):
-            raise HTTPException(status_code=400, detail="Les champs 'accident', 'incendie', 'violence' doivent être des booléens")
-        if not isinstance(data["commentaire"], str):
-            raise HTTPException(status_code=400, detail="Le champ 'commentaire' doit être une chaîne")
-
-        # Identifier les types d’incidents
+        # Validation du JSON avec Pydantic
+        try:
+            report_data = IncidentReport.parse_raw(response)
+        except ValidationError as ve:
+            raise HTTPException(status_code=400, detail=ve.errors())
+        
+        # Déterminer les types d'incidents à partir des booléens
         incident_types = []
-        if data["accident"]:
+        if report_data.accident:
             incident_types.append("accident")
-        if data["incendie"]:
+        if report_data.incendie:
             incident_types.append("incendie")
-        if data["violence"]:
+        if report_data.violence:
             incident_types.append("violence")
         
         if not incident_types:
-            raise HTTPException(status_code=400, detail="Aucun type d'incident détecté (au moins un booléen doit être true)")
+            raise HTTPException(
+                status_code=400,
+                detail="Aucun type d'incident détecté (au moins un booléen doit être true)"
+            )
 
-        # Lire et encoder l’image
+        # Lecture et encodage de l'image
         image_data = await image.read()
         if not image_data:
             raise HTTPException(status_code=400, detail="L'image est vide")
@@ -102,31 +107,28 @@ async def report_incident(
         mime_type = image.content_type if image.content_type in ["image/jpeg", "image/png"] else "image/jpeg"
         formatted_image_base64 = format_image_base64(image_data, mime_type)
 
-
-        # Construire la réponse
+        # Construction de l'incident (conservation du même format de réponse)
+        incident_id = len(incident_storage) + 1  # ID incrémental pour compatibilité
         response_data = {
-            "id": len(incident_storage) + 1,  # ID incrémental pour le prototype
+            "id": incident_id,
             "timestamp": datetime.now(timezone(timedelta(hours=1))).isoformat(),
             "type": incident_types,
             "location": "Cotonou - Carrefour SIKA",  # À rendre dynamique si nécessaire
             "image": formatted_image_base64,
-            "message": data["commentaire"]
+            "message": report_data.commentaire
         }
 
-        print("Données reçues et formatées :")
+        # Log de l'incident reçu (affichage partiel de l'image pour la lisibilité)
         response_data_short = response_data.copy()
-        response_data_short["image"] = response_data["image"][:50] + "..."  # Pour lisibilité
-        print(json.dumps(response_data_short, indent=2))
+        response_data_short["image"] = response_data["image"][:50] + "..."
+        logger.info("Données reçues et formatées : " + json.dumps(response_data_short, indent=2))
         
-        # Stocker l'incident pour le monitoring (pour prototype)
+        # Stockage de l'incident et persistance
         incident_storage.append(response_data)
-        save_incident_to_file()
+        await save_incident_to_file()
 
-        
-        # Envoyer aux services compétents
-        # await send_to_app(response_data)
-        response_for_client = {"status": "success", "message": "Incident signalé avec succès"}
-        return JSONResponse(response_for_client)
+        # Réponse au client
+        return JSONResponse({"status": "success", "message": "Incident signalé avec succès"})
 
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Le JSON envoyé n'est pas valide")
