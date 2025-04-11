@@ -1,5 +1,6 @@
 fastapi
 dotenv
 httpx
+aiofiles
 python-multipart
 uvicorn[standard]
