@@ -124,7 +124,6 @@ async def report_incident(
         # Stocker l'incident pour le monitoring (pour prototype)
         incident_storage.append(response_data)
         await save_incident_to_file()
-
         
         # Envoyer aux services compétents
         # await send_to_app(response_data)
