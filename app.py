@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import json
 import base64
 import httpx
-from aiofiles
+import aiofiles
 
 import os
 from pathlib import Path
